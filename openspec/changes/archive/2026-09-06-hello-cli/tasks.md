@@ -35,7 +35,7 @@
 ## 6. Integration
 
 - [x] 6.1 Run the full gate in one pass — `npm run lint && npm run format:check && npm run build && npm test` — and verify it exits 0 from a clean `node_modules` install.
-- [ ] 6.2 Commit through the project hooks and verify `pre-commit` and `commit-msg` accept the change, and that no build output or `node_modules` is staged.
+- [x] 6.2 Commit through the project hooks and verify `pre-commit` and `commit-msg` accept the change, and that no build output or `node_modules` is staged.
 
 ## 7. Quality gate in the git hooks
 
