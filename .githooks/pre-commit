@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Refuse commits that would poison trunk. Trunk-based development means every
+# commit is a candidate for immediate integration, so the bar is enforced here
+# rather than in a review that never happens.
+set -uo pipefail
+
+TRUNK="${AGENT_GUARD_TRUNK:-main}"
+MAX_FILE_KB="${AGENT_GUARD_MAX_FILE_KB:-2048}"
+fail() { printf '\033[31mpre-commit: %s\033[0m\n' "$1" >&2; exit 1; }
+warn() { printf '\033[33mpre-commit: %s\033[0m\n' "$1" >&2; }
+
+against=HEAD
+git rev-parse --verify HEAD >/dev/null 2>&1 || against=$(git hash-object -t tree /dev/null)
+
+staged=$(git diff --cached --name-only --diff-filter=ACM "$against")
+[ -z "$staged" ] && exit 0
+
+# 1. Unresolved merge conflicts. Committing these breaks trunk for everyone.
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  git diff --cached -U0 -- "$f" | grep -Eq '^\+(<{7}|={7}|>{7})( |$)' \
+    && fail "conflict markers staged in $f — resolve the conflict before committing."
+done <<< "$staged"
+
+# 2. Oversized blobs. A worktree-heavy workflow clones this repo a lot.
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  kb=$(( $(wc -c < "$f") / 1024 ))
+  [ "$kb" -gt "$MAX_FILE_KB" ] \
+    && fail "$f is ${kb}KB (limit ${MAX_FILE_KB}KB). Keep large artifacts out of the repo."
+done <<< "$staged"
+
+# 3. Agent lock files must never be committed.
+printf '%s\n' "$staged" | grep -q '^\.claude/agent-locks/' \
+  && fail "agent lock state is machine-local; it must not be committed."
+
+# 4. A worktree left on trunk while another worktree also sits on trunk is the
+#    classic double-commit race. Git already forbids two worktrees on one
+#    branch, so just surface where we are.
+branch=$(git rev-parse --abbrev-ref HEAD)
+if [ "$branch" != "$TRUNK" ]; then
+  base=$(git merge-base "origin/$TRUNK" HEAD 2>/dev/null)
+  if [ -n "$base" ]; then
+    age_days=$(( ( $(date +%s) - $(git log -1 --format=%ct "$base") ) / 86400 ))
+    [ "$age_days" -ge 2 ] && warn "branch '$branch' diverged from origin/$TRUNK ${age_days} days ago. Rebase and merge it down — long-lived branches are not the workflow here."
+  fi
+fi
+
+exit 0

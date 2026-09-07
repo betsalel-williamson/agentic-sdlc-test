@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# The last gate before work becomes shared. Everything blocked here is
+# something that destroys or strands another agent's committed work.
+set -uo pipefail
+
+TRUNK="${AGENT_GUARD_TRUNK:-main}"
+MAX_BRANCH_AGE_HOURS="${AGENT_GUARD_MAX_BRANCH_AGE_HOURS:-48}"
+remote="$1"
+zero=$(git hash-object -t tree /dev/null | tr '0-9a-f' '0')
+
+fail() { printf '\033[31mpre-push: %s\033[0m\n' "$1" >&2; exit 1; }
+warn() { printf '\033[33mpre-push: %s\033[0m\n' "$1" >&2; }
+
+while read -r local_ref local_oid remote_ref remote_oid; do
+  [ "$local_oid" = "$zero" ] && continue          # deleting a ref
+  short="${remote_ref#refs/heads/}"
+
+  # 1. Non-fast-forward: the remote has commits this push would drop.
+  if [ "$remote_oid" != "$zero" ] && ! git merge-base --is-ancestor "$remote_oid" "$local_oid" 2>/dev/null; then
+    fail "pushing $short would discard commits already on $remote (non-fast-forward).
+         Another agent or worktree pushed since you last fetched.
+         Run: git fetch origin && git rebase origin/$TRUNK"
+  fi
+
+  # 2. Unresolved conflict markers anywhere in the pushed range.
+  range="$local_oid"
+  [ "$remote_oid" != "$zero" ] && range="$remote_oid..$local_oid"
+  if git diff "$range" -U0 2>/dev/null | grep -Eq '^\+(<{7}|>{7})( |$)'; then
+    fail "the commits being pushed contain conflict markers."
+  fi
+
+  # 3. Long-lived branch guard. No PRs means branches are staging areas at most.
+  if [ "$short" != "$TRUNK" ]; then
+    base=$(git merge-base "origin/$TRUNK" "$local_oid" 2>/dev/null)
+    if [ -n "$base" ]; then
+      hours=$(( ( $(date +%s) - $(git log -1 --format=%ct "$base") ) / 3600 ))
+      [ "$hours" -gt "$MAX_BRANCH_AGE_HOURS" ] && fail "branch '$short' has been diverged from $TRUNK for ${hours}h (limit ${MAX_BRANCH_AGE_HOURS}h).
+         This repo uses trunk-based development. Rebase onto origin/$TRUNK and merge down."
+    fi
+    warn "pushing '$short' instead of $TRUNK. Merge it to $TRUNK today — no PR is coming to do it for you."
+  fi
+
+  # 4. Trunk must be pushed from a tree that is actually current.
+  if [ "$short" = "$TRUNK" ]; then
+    git fetch --quiet "$remote" "$TRUNK" 2>/dev/null
+    behind=$(git rev-list --count "$local_oid..refs/remotes/$remote/$TRUNK" 2>/dev/null || echo 0)
+    [ "${behind:-0}" -gt 0 ] && fail "$TRUNK is ${behind} commit(s) ahead of you on $remote.
+         Run: git pull --rebase origin $TRUNK"
+  fi
+done
+
+exit 0

@@ -1,0 +1,10 @@
+# Machine-local agent coordination state (leases, session registry).
+# Lives in the git common dir, but ignore any stray copy.
+.claude/agent-locks/
+.claude/settings.local.json
+
+# Agent worktrees created inside the repo
+.claude/worktrees/
+.worktrees/
+
+.DS_Store

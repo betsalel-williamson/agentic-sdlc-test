@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Keep the log readable when most commits are written by agents.
+set -uo pipefail
+msg_file="$1"
+subject=$(grep -v '^#' "$msg_file" | sed '/^[[:space:]]*$/d' | head -1)
+
+fail() { printf '\033[31mcommit-msg: %s\033[0m\n' "$1" >&2; exit 1; }
+
+[ -z "$subject" ] && fail "empty commit message."
+[ "${#subject}" -gt 72 ] && fail "subject is ${#subject} chars (limit 72). Put detail in the body."
+printf '%s' "$subject" | grep -Eqi '^(wip|temp|test commit|asdf|fixup)\b' \
+  && fail "'$subject' is not a trunk-worthy message. Every commit on trunk should stand on its own."
+exit 0
