@@ -14,6 +14,15 @@ zero=$(git hash-object -t tree /dev/null | tr '0-9a-f' '0')
 fail() { printf '\033[31mpre-push: %s\033[0m\n' "$1" >&2; exit 1; }
 warn() { printf '\033[33mpre-push: %s\033[0m\n' "$1" >&2; }
 
+# Refresh trunk once, before any per-ref check, so "is this integrated?" is
+# answered against the remote as it is now rather than whenever we last
+# fetched. Offline is not fatal: the checks below degrade to skipped.
+TRUNK_REF="refs/remotes/$remote/$TRUNK"
+if ! git fetch --quiet "$remote" "$TRUNK" 2>/dev/null; then
+  warn "could not fetch $remote/$TRUNK — integration checks skipped (offline?)."
+fi
+git rev-parse --verify --quiet "$TRUNK_REF" >/dev/null || TRUNK_REF=""
+
 while read -r local_ref local_oid remote_ref remote_oid; do
   [ "$local_oid" = "$zero" ] && continue          # deleting a ref
   short="${remote_ref#refs/heads/}"
@@ -33,22 +42,31 @@ while read -r local_ref local_oid remote_ref remote_oid; do
   fi
 
   # 3. Long-lived branch guard. No PRs means branches are staging areas at most.
-  if [ "$short" != "$TRUNK" ]; then
-    base=$(git merge-base "origin/$TRUNK" "$local_oid" 2>/dev/null)
+  if [ "$short" != "$TRUNK" ] && [ -n "$TRUNK_REF" ]; then
+    base=$(git merge-base "$TRUNK_REF" "$local_oid" 2>/dev/null)
     if [ -n "$base" ]; then
       hours=$(( ( $(date +%s) - $(git log -1 --format=%ct "$base") ) / 3600 ))
       [ "$hours" -gt "$MAX_BRANCH_AGE_HOURS" ] && fail "branch '$short' has been diverged from $TRUNK for ${hours}h (limit ${MAX_BRANCH_AGE_HOURS}h).
-         This repo uses trunk-based development. Rebase onto origin/$TRUNK and merge down."
+         This repo uses trunk-based development. Rebase onto $remote/$TRUNK and merge down."
     fi
+
+    # 3b. A branch that does not contain current trunk is not integrated. In a
+    #     no-PR workflow nothing downstream will rebase it for you.
+    behind=$(git rev-list --count "$local_oid..$TRUNK_REF" 2>/dev/null || echo 0)
+    [ "${behind:-0}" -gt 0 ] && fail "branch '$short' is ${behind} commit(s) behind $remote/$TRUNK.
+         Integrate before sharing it:
+           git fetch $remote && git rebase $remote/$TRUNK"
+
     warn "pushing '$short' instead of $TRUNK. Merge it to $TRUNK today — no PR is coming to do it for you."
   fi
 
-  # 4. Trunk must be pushed from a tree that is actually current.
-  if [ "$short" = "$TRUNK" ]; then
-    git fetch --quiet "$remote" "$TRUNK" 2>/dev/null
-    behind=$(git rev-list --count "$local_oid..refs/remotes/$remote/$TRUNK" 2>/dev/null || echo 0)
+  # 4. Trunk must be pushed from a tree that is actually current. Check 1 already
+  #    catches this using the oid git read from the remote; this re-checks against
+  #    the ref we just fetched, closing the window where someone pushed in between.
+  if [ "$short" = "$TRUNK" ] && [ -n "$TRUNK_REF" ]; then
+    behind=$(git rev-list --count "$local_oid..$TRUNK_REF" 2>/dev/null || echo 0)
     [ "${behind:-0}" -gt 0 ] && fail "$TRUNK is ${behind} commit(s) ahead of you on $remote.
-         Run: git pull --rebase origin $TRUNK"
+         Run: git pull --rebase $remote $TRUNK"
   fi
 done
 

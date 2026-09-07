@@ -23,11 +23,16 @@ Two independent layers. Git hooks bind everyone; the Claude hooks bind agents.
 
 ### Git hooks — `.githooks/`, enabled via `core.hooksPath`
 
-| Hook         | Refuses                                                                                                                                                             |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pre-commit` | staged conflict markers, blobs over 2MB, committed lock state; warns on a branch diverged 2+ days; **runs the quality gate when code or config is staged**          |
-| `commit-msg` | empty subjects, subjects over 72 chars, `wip`/`temp`/`fixup` placeholders                                                                                           |
-| `pre-push`   | non-fast-forward pushes, conflict markers in the pushed range, branches older than 48h, pushing `main` while behind `origin/main`; **always runs the quality gate** |
+| Hook         | Refuses                                                                                                                                                                                                        |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pre-commit` | staged conflict markers, blobs over 2MB, committed lock state; warns on a branch diverged 2+ days; **runs the quality gate when code or config is staged**                                                     |
+| `commit-msg` | empty subjects, subjects over 72 chars, `wip`/`temp`/`fixup` placeholders                                                                                                                                      |
+| `pre-push`   | non-fast-forward pushes, conflict markers in the pushed range, branches older than 48h, **branches not rebased on current trunk**, pushing `main` while behind `origin/main`; **always runs the quality gate** |
+
+`pre-push` fetches `<remote>/<trunk>` before its per-ref checks, so
+"is this integrated?" is answered against the remote as it is now, not as of
+your last fetch. If the fetch fails (offline) the integration checks are skipped
+with a warning rather than blocking the push.
 
 ### The quality gate — `.githooks/_gate.sh`
 
