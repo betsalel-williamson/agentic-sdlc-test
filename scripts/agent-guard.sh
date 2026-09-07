@@ -177,6 +177,34 @@ cmd_stop() {
   exit 0
 }
 
+# Classify the `rm` invocations inside a compound command. Splits on command
+# separators first, so a slash or path elsewhere in the script is not mistaken
+# for an rm target. Prints a reason and returns 0 when one is dangerous.
+rm_danger_reason() { # $1 = full command
+  local seg root
+  root="$(repo_root)"
+  while IFS= read -r seg; do
+    seg="${seg#"${seg%%[![:space:]]*}"}"                 # ltrim
+    printf '%s' "$seg" | grep -Eq '^rm[[:space:]]+-[a-zA-Z]*[rf]' || continue
+    if printf '%s' "$seg" | grep -Eq '(^|[[:space:]]|/)\.git/?([[:space:]]|$)'; then
+      printf 'Deleting .git destroys the repository, every worktree attached to it, and all local history.'
+      return 0
+    fi
+    if printf '%s' "$seg" | grep -Eq '[[:space:]](/|~|~/|\$HOME|\$HOME/|\*)([[:space:]]|$)'; then
+      printf 'That targets the filesystem root, the home directory, or an unbounded glob.'
+      return 0
+    fi
+    if [ -n "$root" ]; then
+      case " $seg " in
+        *" $root "*|*" $root/ "*)
+          printf 'That would delete the repository working tree itself, along with every uncommitted change in it and any worktree nested under it.'
+          return 0 ;;
+      esac
+    fi
+  done < <(printf '%s\n' "$1" | tr ';&|' '\n\n\n')
+  return 1
+}
+
 cmd_guard_bash() {
   local c reason
   c="$(read_field '.tool_input.command')"
@@ -206,18 +234,10 @@ cmd_guard_bash() {
     reason="History rewriting invalidates every other worktree and clone of this repo."
   elif printf '%s' "$c" | grep -Eq '(^|[;&|]|\s)git\s+([^;&|]*\s)?reflog\s+expire.*--expire[= ](now|all)'; then
     reason="Expiring the reflog removes the last safety net for recovering clobbered commits."
-  elif printf '%s' "$c" | grep -Eq '(^|[;&|]|\s)rm\s+-[a-zA-Z]*[rf]' \
-    && printf '%s' "$c" | grep -Eq '(\s|/)\.git(/|\s|$)'; then
-    reason="Deleting .git destroys the repository, every worktree attached to it, and all local history."
-  elif printf '%s' "$c" | grep -Eq '(^|[;&|]|\s)rm\s+-[a-zA-Z]*[rf]'; then
-    # Substring match, not a regex: the paths below contain regex metacharacters.
-    _root="$(repo_root)"
-    case " $c " in
-      *" $_root "*|*" $_root/ "*|*" $_root;"*|*" $_root/;"*)
-        reason="That would delete the repository working tree itself, along with every uncommitted change in it and any worktree nested under it." ;;
-      *" / "*|*" /* "*|*" ~ "*|*" ~/ "*|*" \$HOME "*|*" \$HOME/ "*)
-        reason="That targets the filesystem or home directory root." ;;
-    esac
+  fi
+
+  if [ -z "$reason" ]; then
+    reason="$(rm_danger_reason "$c")" || reason=""
   fi
 
   [ -z "$reason" ] && allow

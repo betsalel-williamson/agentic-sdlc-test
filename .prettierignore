@@ -1,0 +1,10 @@
+dist/
+node_modules/
+package-lock.json
+
+# Vendored by `openspec init` — not ours to restyle.
+.claude/
+
+# OpenSpec artifacts: heading and list structure is parsed by
+# `openspec validate --strict`, so reformatting can change meaning.
+openspec/

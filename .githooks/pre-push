@@ -5,6 +5,9 @@ set -uo pipefail
 
 TRUNK="${AGENT_GUARD_TRUNK:-main}"
 MAX_BRANCH_AGE_HOURS="${AGENT_GUARD_MAX_BRANCH_AGE_HOURS:-48}"
+HOOK_NAME=pre-push
+. "$(dirname "$0")/_gate.sh"
+
 remote="$1"
 zero=$(git hash-object -t tree /dev/null | tr '0-9a-f' '0')
 
@@ -48,5 +51,8 @@ while read -r local_ref local_oid remote_ref remote_oid; do
          Run: git pull --rebase origin $TRUNK"
   fi
 done
+
+# 5. Nothing unverified reaches trunk. Runs once, after the per-ref checks.
+run_gate push || exit 1
 
 exit 0

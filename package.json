@@ -1,0 +1,30 @@
+{
+  "name": "agentic-sdlc-test",
+  "version": "0.1.0",
+  "description": "A hello-world CLI exercising the OpenSpec + trunk-based agent workflow.",
+  "type": "module",
+  "bin": {
+    "hello": "./dist/src/cli.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run build && node --test \"dist/test/*.test.js\""
+  },
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.4.1",
+    "eslint": "10.10.0",
+    "eslint-config-prettier": "10.1.8",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.69.0"
+  }
+}

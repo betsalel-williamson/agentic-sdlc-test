@@ -23,11 +23,26 @@ Two independent layers. Git hooks bind everyone; the Claude hooks bind agents.
 
 ### Git hooks — `.githooks/`, enabled via `core.hooksPath`
 
-| Hook | Refuses |
-| ---- | ------- |
-| `pre-commit` | staged conflict markers, blobs over 2MB, committed lock state; warns on a branch diverged 2+ days |
-| `commit-msg` | empty subjects, subjects over 72 chars, `wip`/`temp`/`fixup` placeholders |
-| `pre-push` | non-fast-forward pushes, conflict markers in the pushed range, branches older than 48h, pushing `main` while behind `origin/main` |
+| Hook         | Refuses                                                                                                                                                             |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pre-commit` | staged conflict markers, blobs over 2MB, committed lock state; warns on a branch diverged 2+ days; **runs the quality gate when code or config is staged**          |
+| `commit-msg` | empty subjects, subjects over 72 chars, `wip`/`temp`/`fixup` placeholders                                                                                           |
+| `pre-push`   | non-fast-forward pushes, conflict markers in the pushed range, branches older than 48h, pushing `main` while behind `origin/main`; **always runs the quality gate** |
+
+### The quality gate — `.githooks/_gate.sh`
+
+`format:check` -> `lint` -> `build` -> `test`, in that order, stopping at the
+first failure and printing that step's output. Roughly 3s on this repo.
+
+- `pre-commit` runs it **only when a `.ts`/`.js`/`.json` or config file is
+  staged**, so a docs-only commit costs ~0.1s instead of ~3s.
+- `pre-push` runs it **unconditionally**, and additionally **fails** when
+  `node_modules` is missing — unverified work must not reach trunk. On commit a
+  missing `node_modules` only warns, so you can still commit on a fresh clone.
+- Bypass: `git commit --no-verify` / `git push --no-verify`, or `SKIP_GATE=1`.
+- Caveat: the gate runs against the **working tree**, not the staged tree. With
+  the whole-tree commits this workflow expects those are the same; if you stage
+  a subset deliberately, verify before committing.
 
 `core.hooksPath` is per-clone config and is **not** carried by `git clone`.
 After cloning, run:
@@ -44,14 +59,14 @@ a fresh worktree is covered without the manual step.
 
 ### Agent hooks — `.claude/settings.json` → `scripts/agent-guard.sh`
 
-| Event | Behavior |
-| ----- | -------- |
-| `SessionStart` | registers the session; reports the branch, uncommitted count, and any other live agent sessions |
-| `PreToolUse` / `Bash` | **denies** commands that destroy work (below) |
-| `PreToolUse` / `Write`,`Edit` | takes a lease on the file; **denies** if another live session in the *same* worktree holds it, **warns** if the holder is in a *different* worktree |
-| `PostToolUse` / `Write`,`Edit` | refreshes the lease |
-| `Stop` | releases the session's leases; reports uncommitted and unpushed work |
-| `SessionEnd` | deregisters the session and drops its leases |
+| Event                          | Behavior                                                                                                                                            |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SessionStart`                 | registers the session; reports the branch, uncommitted count, and any other live agent sessions                                                     |
+| `PreToolUse` / `Bash`          | **denies** commands that destroy work (below)                                                                                                       |
+| `PreToolUse` / `Write`,`Edit`  | takes a lease on the file; **denies** if another live session in the _same_ worktree holds it, **warns** if the holder is in a _different_ worktree |
+| `PostToolUse` / `Write`,`Edit` | refreshes the lease                                                                                                                                 |
+| `Stop`                         | releases the session's leases; reports uncommitted and unpushed work                                                                                |
+| `SessionEnd`                   | deregisters the session and drops its leases                                                                                                        |
 
 Denied commands: `git reset --hard`, `git clean -f*`, `git checkout/restore .`,
 `git push --force` (and `+refspec`), `git branch -D`,

@@ -9,6 +9,9 @@ MAX_FILE_KB="${AGENT_GUARD_MAX_FILE_KB:-2048}"
 fail() { printf '\033[31mpre-commit: %s\033[0m\n' "$1" >&2; exit 1; }
 warn() { printf '\033[33mpre-commit: %s\033[0m\n' "$1" >&2; }
 
+HOOK_NAME=pre-commit
+. "$(dirname "$0")/_gate.sh"
+
 against=HEAD
 git rev-parse --verify HEAD >/dev/null 2>&1 || against=$(git hash-object -t tree /dev/null)
 
@@ -44,6 +47,12 @@ if [ "$branch" != "$TRUNK" ]; then
     age_days=$(( ( $(date +%s) - $(git log -1 --format=%ct "$base") ) / 86400 ))
     [ "$age_days" -ge 2 ] && warn "branch '$branch' diverged from origin/$TRUNK ${age_days} days ago. Rebase and merge it down — long-lived branches are not the workflow here."
   fi
+fi
+
+# 5. Quality gate. Only when something it can actually check is staged —
+#    a docs-only commit should not pay for a lint and test run.
+if printf '%s\n' "$staged" | grep -Eq '\.(ts|js|mjs|cjs|json)$|^(package|tsconfig|eslint\.config|\.prettierrc)'; then
+  run_gate commit || exit 1
 fi
 
 exit 0
